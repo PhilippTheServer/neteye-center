@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/gorilla/websocket"
+
 	"github.com/neteye/center/internal/models"
 	"github.com/neteye/center/internal/topology"
 )
@@ -14,7 +15,7 @@ import (
 var frontendUpgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 16384,
-	CheckOrigin:    func(r *http.Request) bool { return true },
+	CheckOrigin:     func(_ *http.Request) bool { return true },
 }
 
 type frontendConn struct {
@@ -74,7 +75,7 @@ func (h *FrontendHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (h *FrontendHub) writePump(fc *frontendConn) {
 	defer func() {
-		fc.conn.Close()
+		fc.conn.Close() //nolint:errcheck
 		h.mu.Lock()
 		delete(h.clients, fc)
 		clientCount := len(h.clients)

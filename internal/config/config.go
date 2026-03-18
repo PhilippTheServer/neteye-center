@@ -1,3 +1,4 @@
+// Package config loads and validates neteye-center configuration from YAML and environment variables.
 package config
 
 import (
@@ -15,6 +16,7 @@ type Config struct {
 	Retention RetentionConfig `yaml:"retention"`
 }
 
+// ServerConfig holds listen addresses and timing for the two HTTP servers.
 type ServerConfig struct {
 	// AgentAddr is the WebSocket listen address for agents.
 	AgentAddr string `yaml:"agent_addr"`
@@ -24,12 +26,14 @@ type ServerConfig struct {
 	OfflineTimeout time.Duration `yaml:"offline_timeout"`
 }
 
+// DatabaseConfig holds the PostgreSQL connection settings.
 type DatabaseConfig struct {
 	DSN string `yaml:"dsn"`
 	// MaxConns is the pgx connection pool size.
 	MaxConns int32 `yaml:"max_conns"`
 }
 
+// RetentionConfig controls how long each tier of metrics data is kept.
 type RetentionConfig struct {
 	// RawInterval is the cadence at which agents send updates.
 	RawInterval time.Duration `yaml:"raw_interval"`
@@ -78,7 +82,7 @@ func Load(path string) (*Config, error) {
 		if err != nil {
 			return nil, fmt.Errorf("open config %s: %w", path, err)
 		}
-		defer f.Close()
+		defer f.Close() //nolint:errcheck // read-only, close error not actionable
 		if err := yaml.NewDecoder(f).Decode(cfg); err != nil {
 			return nil, fmt.Errorf("decode config: %w", err)
 		}

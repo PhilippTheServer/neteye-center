@@ -1,5 +1,5 @@
 // Package api wires up all HTTP handlers for the frontend-facing server.
-package api
+package api //nolint:revive // "api" is an intentional, well-understood package name
 
 import (
 	"encoding/json"
@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/neteye/center/internal/db"
 	"github.com/neteye/center/internal/hub"
 	"github.com/neteye/center/internal/models"
@@ -30,7 +31,7 @@ func Handler(pool *pgxpool.Pool, topo *topology.Store, fh *hub.FrontendHub, log 
 	mux.Handle("/ws", fh)
 
 	// REST endpoints.
-	mux.HandleFunc("/api/topology", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/topology", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, topo.Snapshot())
 	})
 
@@ -106,7 +107,7 @@ func Handler(pool *pgxpool.Pool, topo *topology.Store, fh *hub.FrontendHub, log 
 		writeJSON(w, result)
 	})
 
-	mux.HandleFunc("/api/stats", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/stats", func(w http.ResponseWriter, _ *http.Request) {
 		snap := topo.Snapshot()
 		online := 0
 		for _, d := range snap.Devices {
@@ -121,7 +122,7 @@ func Handler(pool *pgxpool.Pool, topo *topology.Store, fh *hub.FrontendHub, log 
 		})
 	})
 
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, models.FrontendMessage{Type: "ok"})
 	})
 

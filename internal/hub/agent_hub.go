@@ -12,6 +12,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/neteye/center/internal/config"
 	"github.com/neteye/center/internal/db"
 	"github.com/neteye/center/internal/models"
@@ -21,7 +22,7 @@ import (
 var agentUpgrader = websocket.Upgrader{
 	ReadBufferSize:  4096,
 	WriteBufferSize: 4096,
-	CheckOrigin:    func(r *http.Request) bool { return true },
+	CheckOrigin:     func(_ *http.Request) bool { return true },
 }
 
 // agentConn holds per-connection state for a connected agent.
@@ -30,16 +31,6 @@ type agentConn struct {
 	deviceID string
 	hostname string
 	mu       sync.Mutex // guards conn writes
-}
-
-func (a *agentConn) send(msg interface{}) error {
-	data, err := json.Marshal(msg)
-	if err != nil {
-		return err
-	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.conn.WriteMessage(websocket.TextMessage, data)
 }
 
 // AgentHub accepts WebSocket connections from agents, processes their updates,
@@ -88,13 +79,13 @@ func (h *AgentHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AgentHub) handleAgent(conn *websocket.Conn) {
-	defer conn.Close()
+	defer conn.Close() //nolint:errcheck
 
 	ac := &agentConn{conn: conn}
 	ctx := context.Background()
 
 	// Set initial read deadline for the registration message.
-	conn.SetReadDeadline(time.Now().Add(15 * time.Second))
+	conn.SetReadDeadline(time.Now().Add(15 * time.Second)) //nolint:errcheck
 
 	// First message must be a registration.
 	_, data, err := conn.ReadMessage()
@@ -149,9 +140,9 @@ func (h *AgentHub) handleAgent(conn *websocket.Conn) {
 	}()
 
 	// Remove read deadline; subsequent messages are heartbeat-driven.
-	conn.SetReadDeadline(time.Time{})
+	conn.SetReadDeadline(time.Time{}) //nolint:errcheck
 	conn.SetPongHandler(func(string) error {
-		conn.SetReadDeadline(time.Now().Add(h.cfg.Server.OfflineTimeout * 2))
+		conn.SetReadDeadline(time.Now().Add(h.cfg.Server.OfflineTimeout * 2)) //nolint:errcheck
 		return nil
 	})
 
@@ -164,7 +155,7 @@ func (h *AgentHub) handleAgent(conn *websocket.Conn) {
 			err := conn.WriteMessage(websocket.PingMessage, nil)
 			ac.mu.Unlock()
 			if err != nil {
-				conn.Close()
+				conn.Close() //nolint:errcheck
 				return
 			}
 		}
@@ -175,7 +166,7 @@ func (h *AgentHub) handleAgent(conn *websocket.Conn) {
 		if err != nil {
 			return
 		}
-		conn.SetReadDeadline(time.Now().Add(h.cfg.Server.OfflineTimeout * 2))
+		conn.SetReadDeadline(time.Now().Add(h.cfg.Server.OfflineTimeout * 2)) //nolint:errcheck
 
 		var m models.AgentMessage
 		if err := json.Unmarshal(data, &m); err != nil {
@@ -228,7 +219,7 @@ func (h *AgentHub) processUpdate(ctx context.Context, ac *agentConn, u *models.A
 
 	// Push changes to all frontend clients.
 	h.frontendHub.BroadcastJSON(models.FrontendMessage{
-		Type:        "device_update",
+		Type:         "device_update",
 		DeviceUpdate: &deviceInfo,
 	})
 	for i := range metricsUpdates {

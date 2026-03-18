@@ -1,0 +1,30 @@
+version: "2"
+
+linters:
+  default: standard # enables errcheck, govet, ineffassign, staticcheck, unused
+  enable:
+    - bodyclose              # HTTP response body must be closed
+    - copyloopvar            # detect loop variable copy bugs
+    - errorlint              # correct error wrapping (errors.Is/As)
+    - fatcontext             # no context.WithValue in loops
+    - gocheckcompilerdirectives # validate //go: directives
+    - gocritic               # broad set of style + correctness checks
+    - misspell               # catch typos in comments and strings
+    - nilerr                 # detect "if err != nil { return nil }"
+    - revive                 # golint successor — style and correctness
+
+formatters:
+  enable:
+    - goimports              # format + sort/group imports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/neteye/center
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  exclude-rules:
+    # w.Write return value is intentionally ignored in simple health handlers
+    - linters: [errcheck]
+      text: "w.Write"

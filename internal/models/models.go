@@ -35,12 +35,12 @@ type AgentUpdate struct {
 
 // InterfaceInfo describes a single network interface and its current metrics.
 type InterfaceInfo struct {
-	Name      string          `json:"name"`
-	MAC       string          `json:"mac"`
-	State     string          `json:"state"` // "up" | "down"
-	MTU       int             `json:"mtu"`
-	SpeedMbps int64           `json:"speed_mbps"`
-	Addresses []AddressInfo   `json:"addresses"`
+	Name      string           `json:"name"`
+	MAC       string           `json:"mac"`
+	State     string           `json:"state"` // "up" | "down"
+	MTU       int              `json:"mtu"`
+	SpeedMbps int64            `json:"speed_mbps"`
+	Addresses []AddressInfo    `json:"addresses"`
 	Metrics   InterfaceMetrics `json:"metrics"`
 }
 

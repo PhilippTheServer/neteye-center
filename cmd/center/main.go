@@ -1,8 +1,10 @@
+// Package main is the entry point for the neteye-center server.
 package main
 
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -27,10 +29,16 @@ func main() {
 	logger := buildLogger(*logLevel, *logFormat)
 	slog.SetDefault(logger)
 
-	cfg, err := config.Load(*cfgPath)
-	if err != nil {
-		logger.Error("load config", "err", err)
+	if err := run(logger, *cfgPath); err != nil {
+		logger.Error("fatal", "err", err)
 		os.Exit(1)
+	}
+}
+
+func run(logger *slog.Logger, cfgPath string) error {
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -39,8 +47,7 @@ func main() {
 	// ── Database ─────────────────────────────────────────────────────────
 	pool, err := db.Connect(ctx, cfg.Database)
 	if err != nil {
-		logger.Error("connect db", "err", err)
-		os.Exit(1)
+		return fmt.Errorf("connect db: %w", err)
 	}
 	defer pool.Close()
 	logger.Info("database connected and migrated")
@@ -66,7 +73,7 @@ func main() {
 	// ── Agent WebSocket server ────────────────────────────────────────────
 	agentMux := http.NewServeMux()
 	agentMux.Handle("/ws", agentHub)
-	agentMux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+	agentMux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Write([]byte("ok")) //nolint:errcheck
 	})
 	agentServer := &http.Server{Addr: cfg.Server.AgentAddr, Handler: agentMux}
@@ -75,7 +82,6 @@ func main() {
 		logger.Info("agent server listening", "addr", cfg.Server.AgentAddr)
 		if err := agentServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logger.Error("agent server", "err", err)
-			os.Exit(1)
 		}
 	}()
 
@@ -89,7 +95,6 @@ func main() {
 		logger.Info("frontend server listening", "addr", cfg.Server.FrontendAddr)
 		if err := frontendServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logger.Error("frontend server", "err", err)
-			os.Exit(1)
 		}
 	}()
 
@@ -106,6 +111,7 @@ func main() {
 	agentServer.Shutdown(shutCtx)    //nolint:errcheck
 	frontendServer.Shutdown(shutCtx) //nolint:errcheck
 	logger.Info("stopped")
+	return nil
 }
 
 func buildLogger(level, format string) *slog.Logger {
