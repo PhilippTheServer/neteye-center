@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
@@ -49,6 +49,7 @@ type AgentHub struct {
 	pool        *pgxpool.Pool
 	topo        *topology.Store
 	frontendHub *FrontendHub
+	log         *slog.Logger
 
 	mu     sync.RWMutex
 	agents map[string]*agentConn // deviceID → conn
@@ -64,12 +65,13 @@ type prevSample struct {
 }
 
 // NewAgentHub creates an AgentHub.
-func NewAgentHub(cfg *config.Config, pool *pgxpool.Pool, topo *topology.Store, fh *FrontendHub) *AgentHub {
+func NewAgentHub(cfg *config.Config, pool *pgxpool.Pool, topo *topology.Store, fh *FrontendHub, log *slog.Logger) *AgentHub {
 	return &AgentHub{
 		cfg:         cfg,
 		pool:        pool,
 		topo:        topo,
 		frontendHub: fh,
+		log:         log,
 		agents:      make(map[string]*agentConn),
 		prevMetrics: make(map[string]prevSample),
 	}
@@ -79,7 +81,7 @@ func NewAgentHub(cfg *config.Config, pool *pgxpool.Pool, topo *topology.Store, f
 func (h *AgentHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	conn, err := agentUpgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Printf("agent upgrade error: %v", err)
+		h.log.Warn("upgrade error", "err", err, "remote", r.RemoteAddr)
 		return
 	}
 	go h.handleAgent(conn)
@@ -97,25 +99,30 @@ func (h *AgentHub) handleAgent(conn *websocket.Conn) {
 	// First message must be a registration.
 	_, data, err := conn.ReadMessage()
 	if err != nil {
-		log.Printf("agent registration read error: %v", err)
+		h.log.Warn("registration read error", "err", err)
 		return
 	}
 	var msg models.AgentMessage
 	if err := json.Unmarshal(data, &msg); err != nil || msg.Type != "register" || msg.Register == nil {
-		log.Printf("agent sent invalid registration")
+		h.log.Warn("invalid registration message", "err", err)
 		return
 	}
 
 	reg := msg.Register
 	deviceID, err := db.UpsertDevice(ctx, h.pool, reg)
 	if err != nil {
-		log.Printf("upsert device %s: %v", reg.Hostname, err)
+		h.log.Error("upsert device", "hostname", reg.Hostname, "err", err)
 		return
 	}
 	ac.deviceID = deviceID
 	ac.hostname = reg.Hostname
 
-	log.Printf("agent connected: %s (%s)", reg.Hostname, deviceID)
+	h.log.Info("agent connected",
+		"hostname", reg.Hostname,
+		"device_id", deviceID,
+		"os", reg.OS,
+		"arch", reg.Arch,
+		"version", reg.AgentVersion)
 
 	h.mu.Lock()
 	h.agents[deviceID] = ac
@@ -127,7 +134,7 @@ func (h *AgentHub) handleAgent(conn *websocket.Conn) {
 		h.mu.Unlock()
 
 		if err := db.MarkDeviceOffline(ctx, h.pool, deviceID); err != nil {
-			log.Printf("mark offline %s: %v", reg.Hostname, err)
+			h.log.Error("mark device offline", "hostname", reg.Hostname, "device_id", deviceID, "err", err)
 		}
 		h.topo.SetOffline(deviceID)
 		h.frontendHub.BroadcastJSON(models.FrontendMessage{
@@ -138,7 +145,7 @@ func (h *AgentHub) handleAgent(conn *websocket.Conn) {
 				LastSeen: time.Now(),
 			},
 		})
-		log.Printf("agent disconnected: %s", reg.Hostname)
+		h.log.Info("agent disconnected", "hostname", reg.Hostname, "device_id", deviceID)
 	}()
 
 	// Remove read deadline; subsequent messages are heartbeat-driven.
@@ -172,7 +179,7 @@ func (h *AgentHub) handleAgent(conn *websocket.Conn) {
 
 		var m models.AgentMessage
 		if err := json.Unmarshal(data, &m); err != nil {
-			log.Printf("agent %s bad message: %v", reg.Hostname, err)
+			h.log.Warn("bad message from agent", "hostname", reg.Hostname, "err", err)
 			continue
 		}
 		if m.Type == "update" && m.Update != nil {
@@ -185,13 +192,13 @@ func (h *AgentHub) processUpdate(ctx context.Context, ac *agentConn, u *models.A
 	// Upsert interfaces + addresses in DB.
 	ifaceIDs, err := db.UpsertInterfaces(ctx, h.pool, ac.deviceID, u.Interfaces)
 	if err != nil {
-		log.Printf("upsert interfaces %s: %v", ac.hostname, err)
+		h.log.Error("upsert interfaces", "hostname", ac.hostname, "err", err)
 		return
 	}
 
 	// Replace routing table.
 	if err := db.ReplaceRoutes(ctx, h.pool, ac.deviceID, u.Routes); err != nil {
-		log.Printf("replace routes %s: %v", ac.hostname, err)
+		h.log.Error("replace routes", "hostname", ac.hostname, "err", err)
 	}
 
 	// Insert raw metrics and compute rates.
@@ -202,12 +209,18 @@ func (h *AgentHub) processUpdate(ctx context.Context, ac *agentConn, u *models.A
 			continue
 		}
 		if err := db.InsertRawMetrics(ctx, h.pool, u.Timestamp, id, iface.Metrics); err != nil {
-			log.Printf("insert metrics %s/%s: %v", ac.hostname, iface.Name, err)
+			h.log.Error("insert raw metrics", "hostname", ac.hostname, "iface", iface.Name, "err", err)
 		}
 		if rate, ok := h.computeRate(ac.deviceID, iface.Name, u.Timestamp, iface.Metrics); ok {
 			metricsUpdates = append(metricsUpdates, rate)
 		}
 	}
+
+	h.log.Debug("processed update",
+		"hostname", ac.hostname,
+		"interfaces", len(u.Interfaces),
+		"routes", len(u.Routes),
+		"metrics_rates", len(metricsUpdates))
 
 	// Update in-memory topology store.
 	deviceInfo := h.buildDeviceInfo(ac, u)

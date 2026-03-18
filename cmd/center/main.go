@@ -3,12 +3,12 @@ package main
 import (
 	"context"
 	"flag"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
-	"time"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/neteye/center/internal/api"
 	"github.com/neteye/center/internal/config"
@@ -20,11 +20,17 @@ import (
 
 func main() {
 	cfgPath := flag.String("config", "", "path to YAML config file (optional)")
+	logLevel := flag.String("log-level", "info", "log level: debug, info, warn, error")
+	logFormat := flag.String("log-format", "text", "log format: text, json")
 	flag.Parse()
+
+	logger := buildLogger(*logLevel, *logFormat)
+	slog.SetDefault(logger)
 
 	cfg, err := config.Load(*cfgPath)
 	if err != nil {
-		log.Fatalf("load config: %v", err)
+		logger.Error("load config", "err", err)
+		os.Exit(1)
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -33,27 +39,28 @@ func main() {
 	// ── Database ─────────────────────────────────────────────────────────
 	pool, err := db.Connect(ctx, cfg.Database)
 	if err != nil {
-		log.Fatalf("connect db: %v", err)
+		logger.Error("connect db", "err", err)
+		os.Exit(1)
 	}
 	defer pool.Close()
-	log.Println("database connected and migrated")
+	logger.Info("database connected and migrated")
 
 	// ── Topology store — seed from DB so restart preserves history ────────
 	topo := topology.NewStore()
 	devices, err := db.LoadAllDevices(ctx, pool)
 	if err != nil {
-		log.Printf("warn: could not load devices from DB: %v", err)
+		logger.Warn("could not load devices from DB", "err", err)
 	} else {
 		topo.LoadFromDB(devices)
-		log.Printf("topology: loaded %d devices from DB", len(devices))
+		logger.Info("topology seeded from DB", "devices", len(devices))
 	}
 
 	// ── Hubs ─────────────────────────────────────────────────────────────
-	frontendHub := hub.NewFrontendHub(topo)
-	agentHub := hub.NewAgentHub(cfg, pool, topo, frontendHub)
+	frontendHub := hub.NewFrontendHub(topo, logger.With("component", "frontend_hub"))
+	agentHub := hub.NewAgentHub(cfg, pool, topo, frontendHub, logger.With("component", "agent_hub"))
 
 	// ── Retention manager ────────────────────────────────────────────────
-	retMgr := retention.New(pool, cfg.Retention)
+	retMgr := retention.New(pool, cfg.Retention, logger.With("component", "retention"))
 	go retMgr.Run(ctx)
 
 	// ── Agent WebSocket server ────────────────────────────────────────────
@@ -65,35 +72,60 @@ func main() {
 	agentServer := &http.Server{Addr: cfg.Server.AgentAddr, Handler: agentMux}
 
 	go func() {
-		log.Printf("agent server listening on %s", cfg.Server.AgentAddr)
+		logger.Info("agent server listening", "addr", cfg.Server.AgentAddr)
 		if err := agentServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("agent server: %v", err)
+			logger.Error("agent server", "err", err)
+			os.Exit(1)
 		}
 	}()
 
 	// ── Frontend HTTP + WebSocket server ─────────────────────────────────
 	frontendServer := &http.Server{
 		Addr:    cfg.Server.FrontendAddr,
-		Handler: api.Handler(pool, topo, frontendHub),
+		Handler: api.Handler(pool, topo, frontendHub, logger.With("component", "api")),
 	}
 
 	go func() {
-		log.Printf("frontend server listening on %s", cfg.Server.FrontendAddr)
+		logger.Info("frontend server listening", "addr", cfg.Server.FrontendAddr)
 		if err := frontendServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("frontend server: %v", err)
+			logger.Error("frontend server", "err", err)
+			os.Exit(1)
 		}
 	}()
 
-	log.Printf("neteye-center running | agents→%s | frontend→%s",
-		cfg.Server.AgentAddr, cfg.Server.FrontendAddr)
+	logger.Info("neteye-center running",
+		"agent_addr", cfg.Server.AgentAddr,
+		"frontend_addr", cfg.Server.FrontendAddr)
 
 	// ── Graceful shutdown ─────────────────────────────────────────────────
 	<-ctx.Done()
-	log.Println("shutting down...")
+	logger.Info("shutting down")
 
 	shutCtx, shutCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutCancel()
 	agentServer.Shutdown(shutCtx)    //nolint:errcheck
 	frontendServer.Shutdown(shutCtx) //nolint:errcheck
-	log.Println("stopped")
+	logger.Info("stopped")
+}
+
+func buildLogger(level, format string) *slog.Logger {
+	var lvl slog.Level
+	switch level {
+	case "debug":
+		lvl = slog.LevelDebug
+	case "warn", "warning":
+		lvl = slog.LevelWarn
+	case "error":
+		lvl = slog.LevelError
+	default:
+		lvl = slog.LevelInfo
+	}
+	opts := &slog.HandlerOptions{Level: lvl}
+	var handler slog.Handler
+	if format == "json" {
+		handler = slog.NewJSONHandler(os.Stdout, opts)
+	} else {
+		handler = slog.NewTextHandler(os.Stdout, opts)
+	}
+	return slog.New(handler)
 }

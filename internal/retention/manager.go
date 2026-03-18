@@ -7,7 +7,7 @@ package retention
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -18,11 +18,12 @@ import (
 type Manager struct {
 	pool *pgxpool.Pool
 	cfg  config.RetentionConfig
+	log  *slog.Logger
 }
 
 // New creates a Manager. Call Run() in a goroutine.
-func New(pool *pgxpool.Pool, cfg config.RetentionConfig) *Manager {
-	return &Manager{pool: pool, cfg: cfg}
+func New(pool *pgxpool.Pool, cfg config.RetentionConfig, log *slog.Logger) *Manager {
+	return &Manager{pool: pool, cfg: cfg, log: log}
 }
 
 // Run blocks until ctx is cancelled, running the job on each tick.
@@ -46,27 +47,27 @@ func (m *Manager) Run(ctx context.Context) {
 func (m *Manager) runOnce(ctx context.Context) {
 	start := time.Now()
 	if err := m.downsampleTo1Min(ctx); err != nil {
-		log.Printf("retention: 1min downsample: %v", err)
+		m.log.Error("1min downsample failed", "err", err)
 	}
 	if err := m.downsampleTo1Hour(ctx); err != nil {
-		log.Printf("retention: 1hour downsample: %v", err)
+		m.log.Error("1hour downsample failed", "err", err)
 	}
 	if err := m.downsampleToDaily(ctx); err != nil {
-		log.Printf("retention: daily downsample: %v", err)
+		m.log.Error("daily downsample failed", "err", err)
 	}
 	if err := m.purgeRaw(ctx); err != nil {
-		log.Printf("retention: purge raw: %v", err)
+		m.log.Error("purge raw failed", "err", err)
 	}
 	if err := m.purge1Min(ctx); err != nil {
-		log.Printf("retention: purge 1min: %v", err)
+		m.log.Error("purge 1min failed", "err", err)
 	}
 	if err := m.purge1Hour(ctx); err != nil {
-		log.Printf("retention: purge 1hour: %v", err)
+		m.log.Error("purge 1hour failed", "err", err)
 	}
 	if err := m.purgeDaily(ctx); err != nil {
-		log.Printf("retention: purge daily: %v", err)
+		m.log.Error("purge daily failed", "err", err)
 	}
-	log.Printf("retention: cycle done in %v", time.Since(start).Round(time.Millisecond))
+	m.log.Info("retention cycle done", "duration", time.Since(start).Round(time.Millisecond))
 }
 
 // downsampleTo1Min aggregates raw rows into 1-minute buckets.
@@ -177,7 +178,7 @@ func (m *Manager) purgeRaw(ctx context.Context) error {
 	cutoff := time.Now().Add(-m.cfg.RawKeep)
 	tag, err := m.pool.Exec(ctx, `DELETE FROM metrics_raw WHERE time < $1`, cutoff)
 	if err == nil && tag.RowsAffected() > 0 {
-		log.Printf("retention: purged %d raw rows older than %v", tag.RowsAffected(), m.cfg.RawKeep)
+		m.log.Info("purged raw metrics", "rows", tag.RowsAffected(), "older_than", m.cfg.RawKeep)
 	}
 	return err
 }

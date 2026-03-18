@@ -3,6 +3,7 @@ package api
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -22,7 +23,7 @@ import (
 //	GET  /api/route     → route analysis (?src=<id>&dst=<id>)
 //	GET  /api/metrics   → metrics history (?iface=<id>&from=<t>&to=<t>)
 //	GET  /health        → liveness probe
-func Handler(pool *pgxpool.Pool, topo *topology.Store, fh *hub.FrontendHub) http.Handler {
+func Handler(pool *pgxpool.Pool, topo *topology.Store, fh *hub.FrontendHub, log *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
 
 	// WebSocket endpoint for the Angular frontend.
@@ -124,7 +125,7 @@ func Handler(pool *pgxpool.Pool, topo *topology.Store, fh *hub.FrontendHub) http
 		writeJSON(w, models.FrontendMessage{Type: "ok"})
 	})
 
-	return corsMiddleware(mux)
+	return requestLogger(log, corsMiddleware(mux))
 }
 
 func writeJSON(w http.ResponseWriter, v interface{}) {
@@ -144,4 +145,36 @@ func corsMiddleware(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// requestLogger logs each HTTP request at Debug level with method, path, status, and duration.
+func requestLogger(log *slog.Logger, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Skip WebSocket upgrade logging — the hub handles that.
+		if r.Header.Get("Upgrade") == "websocket" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		rw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
+		start := time.Now()
+		next.ServeHTTP(rw, r)
+		log.Debug("http request",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", rw.status,
+			"duration", time.Since(start).Round(time.Microsecond),
+			"remote", r.RemoteAddr,
+		)
+	})
+}
+
+// statusWriter wraps ResponseWriter to capture the written status code.
+type statusWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (sw *statusWriter) WriteHeader(code int) {
+	sw.status = code
+	sw.ResponseWriter.WriteHeader(code)
 }

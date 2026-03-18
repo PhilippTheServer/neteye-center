@@ -2,7 +2,7 @@ package hub
 
 import (
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
 	"sync"
 
@@ -27,15 +27,17 @@ type frontendConn struct {
 // updates as devices report in.
 type FrontendHub struct {
 	topo *topology.Store
+	log  *slog.Logger
 
 	mu      sync.RWMutex
 	clients map[*frontendConn]struct{}
 }
 
-// NewFrontendHub creates a FrontendHub. Call Run() in a goroutine.
-func NewFrontendHub(topo *topology.Store) *FrontendHub {
+// NewFrontendHub creates a FrontendHub.
+func NewFrontendHub(topo *topology.Store, log *slog.Logger) *FrontendHub {
 	return &FrontendHub{
 		topo:    topo,
+		log:     log,
 		clients: make(map[*frontendConn]struct{}),
 	}
 }
@@ -44,7 +46,7 @@ func NewFrontendHub(topo *topology.Store) *FrontendHub {
 func (h *FrontendHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	conn, err := frontendUpgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Printf("frontend upgrade error: %v", err)
+		h.log.Warn("upgrade error", "err", err, "remote", r.RemoteAddr)
 		return
 	}
 
@@ -52,7 +54,10 @@ func (h *FrontendHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	h.mu.Lock()
 	h.clients[fc] = struct{}{}
+	clientCount := len(h.clients)
 	h.mu.Unlock()
+
+	h.log.Debug("frontend client connected", "remote", r.RemoteAddr, "total_clients", clientCount)
 
 	// Send initial topology snapshot.
 	snap := h.topo.Snapshot()
@@ -72,7 +77,9 @@ func (h *FrontendHub) writePump(fc *frontendConn) {
 		fc.conn.Close()
 		h.mu.Lock()
 		delete(h.clients, fc)
+		clientCount := len(h.clients)
 		h.mu.Unlock()
+		h.log.Debug("frontend client disconnected", "total_clients", clientCount)
 	}()
 	for data := range fc.send {
 		if err := fc.conn.WriteMessage(websocket.TextMessage, data); err != nil {
@@ -96,7 +103,7 @@ func (h *FrontendHub) readPump(fc *frontendConn) {
 func (h *FrontendHub) BroadcastJSON(msg models.FrontendMessage) {
 	data, err := json.Marshal(msg)
 	if err != nil {
-		log.Printf("frontend broadcast marshal: %v", err)
+		h.log.Error("broadcast marshal error", "err", err)
 		return
 	}
 	h.mu.RLock()
@@ -106,6 +113,7 @@ func (h *FrontendHub) BroadcastJSON(msg models.FrontendMessage) {
 		case fc.send <- data:
 		default:
 			// Client send buffer full — drop this message for this client.
+			h.log.Warn("client send buffer full, dropping message", "msg_type", msg.Type)
 		}
 	}
 }
