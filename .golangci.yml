@@ -12,6 +12,11 @@ linters:
     - misspell               # catch typos in comments and strings
     - nilerr                 # detect "if err != nil { return nil }"
     - revive                 # golint successor — style and correctness
+  settings:
+    errcheck:
+      # w.Write return value is intentionally ignored in simple health handlers
+      exclude-functions:
+        - (net/http.ResponseWriter).Write
 
 formatters:
   enable:
@@ -24,7 +29,3 @@ formatters:
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
-  exclude-rules:
-    # w.Write return value is intentionally ignored in simple health handlers
-    - linters: [errcheck]
-      text: "w.Write"
