@@ -17,9 +17,9 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - uses: golangci/golangci-lint-action@v9
+      - uses: golangci/golangci-lint-action@v7
         with:
-          version: v9.2.0
+          version: v2.0.2
 
   # ── Test ────────────────────────────────────────────────────────────────────
   test:
