@@ -126,7 +126,7 @@ func LoadAllDevices(ctx context.Context, pool *pgxpool.Pool) ([]models.DeviceInf
 	}
 	defer rows.Close()
 
-	var devices []models.DeviceInfo
+	devices := make([]models.DeviceInfo, 0)
 	for rows.Next() {
 		var d models.DeviceInfo
 		if err := rows.Scan(&d.ID, &d.Hostname, &d.OS, &d.Arch, &d.Status, &d.FirstSeen, &d.LastSeen); err != nil {
@@ -163,7 +163,7 @@ func loadInterfaces(ctx context.Context, pool *pgxpool.Pool, deviceID string) ([
 	}
 	defer rows.Close()
 
-	var ifaces []models.InterfaceInfo
+	ifaces := make([]models.InterfaceInfo, 0)
 	var ids []string
 	for rows.Next() {
 		var id string
@@ -196,7 +196,7 @@ func loadAddresses(ctx context.Context, pool *pgxpool.Pool, ifaceID string) ([]m
 	}
 	defer rows.Close()
 
-	var addrs []models.AddressInfo
+	addrs := make([]models.AddressInfo, 0)
 	for rows.Next() {
 		var a models.AddressInfo
 		if err := rows.Scan(&a.Address, &a.Family); err != nil {
@@ -216,7 +216,7 @@ func loadRoutes(ctx context.Context, pool *pgxpool.Pool, deviceID string) ([]mod
 	}
 	defer rows.Close()
 
-	var routes []models.Route
+	routes := make([]models.Route, 0)
 	for rows.Next() {
 		var r models.Route
 		if err := rows.Scan(&r.Destination, &r.Gateway, &r.InterfaceName, &r.Metric, &r.Flags); err != nil {

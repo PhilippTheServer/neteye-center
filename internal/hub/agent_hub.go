@@ -267,13 +267,26 @@ func (h *AgentHub) computeRate(deviceID, ifaceName string, t time.Time, cur mode
 
 func (h *AgentHub) buildDeviceInfo(ac *agentConn, u *models.AgentUpdate) models.DeviceInfo {
 	existing := h.topo.Get(ac.deviceID)
+	ifaces := u.Interfaces
+	if ifaces == nil {
+		ifaces = []models.InterfaceInfo{}
+	}
+	for i := range ifaces {
+		if ifaces[i].Addresses == nil {
+			ifaces[i].Addresses = []models.AddressInfo{}
+		}
+	}
+	routes := u.Routes
+	if routes == nil {
+		routes = []models.Route{}
+	}
 	d := models.DeviceInfo{
 		ID:         ac.deviceID,
 		Hostname:   ac.hostname,
 		Status:     "online",
 		LastSeen:   u.Timestamp,
-		Interfaces: u.Interfaces,
-		Routes:     u.Routes,
+		Interfaces: ifaces,
+		Routes:     routes,
 	}
 	if existing != nil {
 		d.FirstSeen = existing.FirstSeen
