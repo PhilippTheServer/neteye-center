@@ -11,9 +11,10 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /neteye-center ./cmd/center
 
 # ── Runtime stage ─────────────────────────────────────────────────────────────
-FROM scratch
+FROM alpine:3.21
 
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+RUN apk add --no-cache wget ca-certificates
+
 COPY --from=builder /neteye-center /neteye-center
 
 EXPOSE 8080 9090
