@@ -44,7 +44,7 @@ var migrations = []string{
 	`CREATE TABLE IF NOT EXISTS interface_addresses (
 		id           UUID  PRIMARY KEY DEFAULT gen_random_uuid(),
 		interface_id UUID  NOT NULL REFERENCES interfaces(id) ON DELETE CASCADE,
-		address      CIDR  NOT NULL,
+		address      INET  NOT NULL,
 		family       TEXT  NOT NULL,
 		UNIQUE (interface_id, address)
 	)`,
@@ -126,6 +126,11 @@ var migrations = []string{
 		sample_count     INT         NOT NULL DEFAULT 0,
 		PRIMARY KEY (interface_id, date)
 	)`,
+
+	// ── Fix interface_addresses.address: CIDR → INET so host-bit addresses
+	// like 2a01:4f8:c17:d7b2::1/64 are accepted (CIDR requires zero host bits).
+	`ALTER TABLE interface_addresses
+		ALTER COLUMN address TYPE INET USING address::inet`,
 }
 
 func migrate(ctx context.Context, pool *pgxpool.Pool) error {

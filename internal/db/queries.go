@@ -66,7 +66,7 @@ func UpsertInterfaces(ctx context.Context, pool *pgxpool.Pool, deviceID string, 
 		for _, addr := range iface.Addresses {
 			if _, err := pool.Exec(ctx, `
 				INSERT INTO interface_addresses (interface_id, address, family)
-				VALUES ($1, $2::cidr, $3)
+				VALUES ($1, $2::inet, $3)
 				ON CONFLICT DO NOTHING`,
 				id, addr.Address, addr.Family,
 			); err != nil {
